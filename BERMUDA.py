@@ -14,7 +14,9 @@ sigma_list = [1, 2, 4, 8, 16]
 sigma_list = [sigma / base for sigma in sigma_list]
 
 from imblearn.over_sampling import RandomOverSampler
+
 imblearn_seed = 0
+
 
 def training(dataset_list, cluster_pairs, nn_paras):
     """ Training an autoencoder to remove batch effects
@@ -29,32 +31,41 @@ def training(dataset_list, cluster_pairs, nn_paras):
         loss_transfer_list: list of transfer loss
     """
     # load nn parameters
-    batch_size = nn_paras['batch_size']
-    num_epochs = nn_paras['num_epochs']
-    num_inputs = nn_paras['num_inputs']
-    code_dim = nn_paras['code_dim']
-    cuda = nn_paras['cuda']
+    batch_size = nn_paras["batch_size"]
+    num_epochs = nn_paras["num_epochs"]
+    num_inputs = nn_paras["num_inputs"]
+    code_dim = nn_paras["code_dim"]
+    cuda = nn_paras["cuda"]
 
     # training data for autoencoder, construct a DataLoader for each cluster
     cluster_loader_dict = {}
     for i in range(len(dataset_list)):
-        gene_exp = dataset_list[i]['gene_exp'].transpose()
-        cluster_labels = dataset_list[i]['cluster_labels']  # cluster labels do not overlap between datasets
+        gene_exp = dataset_list[i]["gene_exp"].transpose()
+        cluster_labels = dataset_list[i][
+            "cluster_labels"
+        ]  # cluster labels do not overlap between datasets
         unique_labels = np.unique(cluster_labels)
         # Random oversampling based on cell cluster sizes
-        gene_exp, cluster_labels = RandomOverSampler(random_state=imblearn_seed).fit_sample(gene_exp, cluster_labels)
+        gene_exp, cluster_labels = RandomOverSampler(
+            random_state=imblearn_seed
+        ).fit_sample(gene_exp, cluster_labels)
 
         # construct DataLoader list
         for j in range(len(unique_labels)):
             idx = cluster_labels == unique_labels[j]
             if cuda:
                 torch_dataset = torch.utils.data.TensorDataset(
-                    torch.FloatTensor(gene_exp[idx,:]).cuda(), torch.LongTensor(cluster_labels[idx]).cuda())
+                    torch.FloatTensor(gene_exp[idx, :]).cuda(),
+                    torch.LongTensor(cluster_labels[idx]).cuda(),
+                )
             else:
                 torch_dataset = torch.utils.data.TensorDataset(
-                    torch.FloatTensor(gene_exp[idx, :]), torch.LongTensor(cluster_labels[idx]))
-            data_loader = torch.utils.data.DataLoader(torch_dataset, batch_size=batch_size,
-                                                        shuffle=True, drop_last=True)
+                    torch.FloatTensor(gene_exp[idx, :]),
+                    torch.LongTensor(cluster_labels[idx]),
+                )
+            data_loader = torch.utils.data.DataLoader(
+                torch_dataset, batch_size=batch_size, shuffle=True, drop_last=True
+            )
             cluster_loader_dict[unique_labels[j]] = data_loader
 
     # create model
@@ -72,7 +83,9 @@ def training(dataset_list, cluster_pairs, nn_paras):
     loss_reconstruct_list = []
     loss_transfer_list = []
     for epoch in range(1, num_epochs + 1):
-        avg_loss, avg_reco_loss, avg_tran_loss = training_epoch(epoch, model, cluster_loader_dict, cluster_pairs, nn_paras)
+        avg_loss, avg_reco_loss, avg_tran_loss = training_epoch(
+            epoch, model, cluster_loader_dict, cluster_pairs, nn_paras
+        )
         # terminate early if loss is nan
         if math.isnan(avg_reco_loss) or math.isnan(avg_tran_loss):
             return [], model, [], [], []
@@ -96,14 +109,14 @@ def training_epoch(epoch, model, cluster_loader_dict, cluster_pairs, nn_paras):
             avg_reco_loss: average reconstruction loss of mini-batches
             avg_tran_loss: average transfer loss of mini-batches
         """
-    log_interval = nn_paras['log_interval']
+    log_interval = nn_paras["log_interval"]
     # load nn parameters
-    base_lr = nn_paras['base_lr']
-    lr_step = nn_paras['lr_step']
-    num_epochs = nn_paras['num_epochs']
-    l2_decay = nn_paras['l2_decay']
-    gamma = nn_paras['gamma']
-    cuda = nn_paras['cuda']
+    base_lr = nn_paras["base_lr"]
+    lr_step = nn_paras["lr_step"]
+    num_epochs = nn_paras["num_epochs"]
+    l2_decay = nn_paras["l2_decay"]
+    gamma = nn_paras["gamma"]
+    cuda = nn_paras["cuda"]
 
     # step decay of learning rate
     learning_rate = base_lr / math.pow(2, math.floor(epoch / lr_step))
@@ -112,13 +125,20 @@ def training_epoch(epoch, model, cluster_loader_dict, cluster_pairs, nn_paras):
     gamma = gamma_rate * gamma
 
     if epoch % log_interval == 0:
-        print('{:}, Epoch {}, learning rate {:.3E}, gamma {:.3E}'.format(
-                time.asctime(time.localtime()), epoch, learning_rate, gamma))
+        print(
+            "{:}, Epoch {}, learning rate {:.3E}, gamma {:.3E}".format(
+                time.asctime(time.localtime()), epoch, learning_rate, gamma
+            )
+        )
 
-    optimizer = torch.optim.Adam([
-        {'params': model.encoder.parameters()},
-        {'params': model.decoder.parameters()},
-    ], lr=learning_rate, weight_decay=l2_decay)
+    optimizer = torch.optim.Adam(
+        [
+            {"params": model.encoder.parameters()},
+            {"params": model.decoder.parameters()},
+        ],
+        lr=learning_rate,
+        weight_decay=l2_decay,
+    )
 
     model.train()
 
@@ -162,12 +182,12 @@ def training_epoch(epoch, model, cluster_loader_dict, cluster_pairs, nn_paras):
         if cuda:
             loss_transfer = loss_transfer.cuda()
         for i in range(cluster_pairs.shape[0]):
-            cls_1 = int(cluster_pairs[i,0])
-            cls_2 = int(cluster_pairs[i,1])
+            cls_1 = int(cluster_pairs[i, 0])
+            cls_2 = int(cluster_pairs[i, 1])
             if cls_1 not in code_dict or cls_2 not in code_dict:
                 continue
             mmd2_D = mix_rbf_mmd2(code_dict[cls_1], code_dict[cls_2], sigma_list)
-            loss_transfer += mmd2_D * cluster_pairs[i,2]
+            loss_transfer += mmd2_D * cluster_pairs[i, 2]
 
         # reconstruction loss for all clusters
         loss_reconstruct = torch.FloatTensor([0])
@@ -192,8 +212,11 @@ def training_epoch(epoch, model, cluster_loader_dict, cluster_pairs, nn_paras):
     avg_tran_loss = total_tran_loss / num_batches
 
     if epoch % log_interval == 0:
-        print('Avg_loss {:.3E}\t Avg_reconstruct_loss {:.3E}\t Avg_transfer_loss {:.3E}'.format(
-            avg_total_loss, avg_reco_loss, avg_tran_loss))
+        print(
+            "Avg_loss {:.3E}\t Avg_reconstruct_loss {:.3E}\t Avg_transfer_loss {:.3E}".format(
+                avg_total_loss, avg_reco_loss, avg_tran_loss
+            )
+        )
     return avg_total_loss, avg_reco_loss, avg_tran_loss
 
 
@@ -208,21 +231,24 @@ def testing(model, dataset_list, nn_paras):
     """
 
     # load nn parameters
-    cuda = nn_paras['cuda']
+    cuda = nn_paras["cuda"]
 
     data_loader_list = []
     num_cells = []
     for dataset in dataset_list:
         torch_dataset = torch.utils.data.TensorDataset(
-            torch.FloatTensor(dataset['gene_exp'].transpose()), torch.LongTensor(dataset['cell_labels']))
-        data_loader = torch.utils.data.DataLoader(torch_dataset, batch_size=len(dataset['cell_labels']),
-                                                    shuffle=False)
+            torch.FloatTensor(dataset["gene_exp"].transpose()),
+            torch.LongTensor(dataset["cell_labels"]),
+        )
+        data_loader = torch.utils.data.DataLoader(
+            torch_dataset, batch_size=len(dataset["cell_labels"]), shuffle=False
+        )
         data_loader_list.append(data_loader)
         num_cells.append(len(dataset["cell_labels"]))
 
     model.eval()
 
-    code_list = [] # list pf embedded codes
+    code_list = []  # list pf embedded codes
     for i in range(len(data_loader_list)):
         idx = 0
         with torch.no_grad():
@@ -233,7 +259,7 @@ def testing(model, dataset_list, nn_paras):
                 code_tmp = code_tmp.cpu().numpy()
                 if idx == 0:
                     code = np.zeros((code_tmp.shape[1], num_cells[i]))
-                code[:, idx:idx + code_tmp.shape[0]] = code_tmp.T
+                code[:, idx : idx + code_tmp.shape[0]] = code_tmp.T
                 idx += code_tmp.shape[0]
         code_list.append(code)
 
